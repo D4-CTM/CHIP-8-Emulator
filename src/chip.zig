@@ -59,6 +59,9 @@ pub const Chip8 = struct {
         var chip = Chip8{ .rand = rand, .super = super };
         _ = &chip;
         std.mem.copyForwards(u8, &chip.memory, &FONTSET);
+        for (chip.gfx[0..]) |*gfx| {
+            @memset(gfx, false);
+        }
         @memset(&chip.stack, 0);
         @memset(&chip.v, 0);
         return chip;
@@ -253,7 +256,7 @@ pub const Chip8 = struct {
     pub fn DrawGraphics(this: *Chip8) void {
         for (this.gfx, 0..) |gfx, x| {
             for (gfx, 0..) |bit, y| if (bit) {
-                ray.DrawRectangle(x * 10, y * 10, WIDTH, HEIGHT, ray.WHITE);
+                ray.DrawRectangle(@intCast(x * 10), @intCast(y * 10), WIDTH, HEIGHT, ray.WHITE);
             };
         }
     }
@@ -277,15 +280,12 @@ pub const Chip8 = struct {
         ray.SetTargetFPS(60);
         var initTime = std.time.milliTimestamp();
         while (this.running | ray.WindowShouldClose()) {
-            std.log.debug("pc: {d}", .{this.pc});
-            const op1: u8 = std.math.shl(u8, this.memory[this.pc], 8);
+            const op1: u16 = std.math.shl(u16, this.memory[this.pc], 8);
             const op2 = this.memory[this.pc + 1];
             const opcode = op1 ^ op2;
-            std.log.debug("op1: 0x{x:0>2}", .{op1});
-            std.log.debug("op2: 0x{x:0>2}", .{op2});
-            std.log.debug("opcode: 0x{x:0>4}", .{opcode});
             this.pc += 2;
             try this.ExecuteOpcode(opcode);
+            this.DrawGraphics();
             
             if ((std.time.milliTimestamp() - initTime) >= 1/60) {
                 if (this.DELAY_TIMER > 0) this.DELAY_TIMER -= 1;
