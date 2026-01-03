@@ -254,6 +254,9 @@ pub const Chip8 = struct {
     }
 
     pub fn DrawGraphics(this: *Chip8) void {
+        ray.BeginDrawing();
+        defer ray.EndDrawing();
+
         for (this.gfx, 0..) |gfx, x| {
             for (gfx, 0..) |bit, y| if (bit) {
                 ray.DrawRectangle(@intCast(x * 10), @intCast(y * 10), WIDTH, HEIGHT, ray.WHITE);
@@ -279,13 +282,12 @@ pub const Chip8 = struct {
 
         ray.SetTargetFPS(60);
         var initTime = std.time.milliTimestamp();
-        while (this.running | ray.WindowShouldClose()) {
+        while (this.running & !ray.WindowShouldClose()) {
             const op1: u16 = std.math.shl(u16, this.memory[this.pc], 8);
             const op2 = this.memory[this.pc + 1];
             const opcode = op1 ^ op2;
             this.pc += 2;
             try this.ExecuteOpcode(opcode);
-            this.DrawGraphics();
             
             if ((std.time.milliTimestamp() - initTime) >= 1/60) {
                 if (this.DELAY_TIMER > 0) this.DELAY_TIMER -= 1;
@@ -295,6 +297,7 @@ pub const Chip8 = struct {
                 }
                 initTime = std.time.milliTimestamp();
             }
+            this.DrawGraphics();
         }
     }
 };
