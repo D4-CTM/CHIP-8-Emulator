@@ -277,13 +277,13 @@ pub const Chip8 = struct {
         ray.SetTargetFPS(60);
         var initTime = std.time.milliTimestamp();
         while (this.running | ray.WindowShouldClose()) {
+            std.log.debug("pc: {d}", .{this.pc});
             const op1: u8 = std.math.shl(u8, this.memory[this.pc], 8);
             const op2 = this.memory[this.pc + 1];
             const opcode = op1 ^ op2;
-            std.log.info("op1: 0x{x:2}", .{op1});
-            std.log.info("op2: 0x{x:2}", .{op2});
-            std.log.info("opcode: 0x{x:0>4}", .{opcode});
-            std.log.info("pc: {d}", .{this.pc});
+            std.log.debug("op1: 0x{x:0>2}", .{op1});
+            std.log.debug("op2: 0x{x:0>2}", .{op2});
+            std.log.debug("opcode: 0x{x:0>4}", .{opcode});
             this.pc += 2;
             try this.ExecuteOpcode(opcode);
             
