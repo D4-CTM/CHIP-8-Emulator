@@ -6,10 +6,8 @@ const ray = @cImport({
 const WIDTH = 10;
 const HEIGHT = 10;
 
-pub const CHIP8_KEY = enum(ray.KeyboardKey) { K1 = ray.KEY_ONE, K2 = ray.KEY_TWO, K3 = ray.KEY_THREE, K4 = ray.KEY_FOUR, K5 = ray.KEY_Q, K6 = ray.KEY_W, K7 = ray.KEY_E, K8 = ray.KEY_R, K9 = ray.KEY_A, KA = ray.KEY_S, KB = ray.KEY_D, KC = ray.KEY_F, KD = ray.KEY_Z, K0 = ray.KEY_X, KE = ray.KEY_C, KF = ray.KEY_V };
-
-fn getKey() ?CHIP8_KEY {
-    return @enumFromInt(ray.GetKeyPressed());
+fn getKey() ?u8 {
+    return if (ray.IsKeyDown(ray.KEY_ONE)) 0x1 else if (ray.IsKeyDown(ray.KEY_TWO)) 0x2 else if (ray.IsKeyDown(ray.KEY_THREE)) 0x3 else if (ray.IsKeyDown(ray.KEY_FOUR)) 0xC else if (ray.IsKeyDown(ray.KEY_Q)) 0x4 else if (ray.IsKeyDown(ray.KEY_W)) 0x5 else if (ray.IsKeyDown(ray.KEY_E)) 0x6 else if (ray.IsKeyDown(ray.KEY_R)) 0xD else if (ray.IsKeyDown(ray.KEY_A)) 0x7 else if (ray.IsKeyDown(ray.KEY_S)) 0x8 else if (ray.IsKeyDown(ray.KEY_D)) 0x9 else if (ray.IsKeyDown(ray.KEY_F)) 0xE else if (ray.IsKeyDown(ray.KEY_Z)) 0xA else if (ray.IsKeyDown(ray.KEY_X)) 0x0 else if (ray.IsKeyDown(ray.KEY_C)) 0xB else if (ray.IsKeyDown(ray.KEY_V)) 0xF else null;
 }
 
 pub const FONTSET = [_]u8{
@@ -31,6 +29,48 @@ pub const FONTSET = [_]u8{
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 };
 
+// Function made with Gemini
+fn createBeep(frequency: f32, duration: f32) ray.Sound {
+    const sample_rate = 44100;
+    const frame_count = @as(u32, @intFromFloat(sample_rate * duration));
+    
+    // Allocate memory for the audio samples
+    // Using C allocator because raylib's UnloadWave will attempt to free this
+    const samples = ray.MemAlloc(@as(c_uint, @intCast(frame_count * @sizeOf(f32))));
+    const float_samples: [*]f32 = @ptrCast(@alignCast(samples));
+
+    var i: u32 = 0;
+    while (i < frame_count) : (i += 1) {
+        const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(sample_rate));
+        var amplitude: f32 = 0.5; // Volume (0.0 to 1.0)
+
+        // Simple Fade-out to prevent "clicking"
+        const fade_threshold = 0.1; // last 10% of the sound
+        const current_pos = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(frame_count));
+        if (current_pos > (1.0 - fade_threshold)) {
+            amplitude *= (1.0 - current_pos) / fade_threshold;
+        }
+
+        float_samples[i] = @sin(2.0 * std.math.pi * frequency * t) * amplitude;
+    }
+
+    const wave = ray.Wave{
+        .frameCount = frame_count,
+        .sampleRate = sample_rate,
+        .sampleSize = 32, // 32-bit float
+        .channels = 1,    // Mono
+        .data = samples,
+    };
+
+    const sound = ray.LoadSoundFromWave(wave);
+    
+    // We can free the CPU-side wave immediately because 
+    // LoadSoundFromWave copies the data to the audio system/RAM.
+    ray.UnloadWave(wave); 
+    
+    return sound;
+}
+
 pub const Chip8 = struct {
     running: bool = true,
     super: bool = false,
@@ -44,8 +84,8 @@ pub const Chip8 = struct {
     pc: u16 = 0x200,
     gfx: [64][32]bool = undefined,
 
-    DELAY_TIMER: u8 = 0,
     SOUND_TIMER: u8 = 0,
+    DELAY_TIMER: u8 = 0,
 
     stack: [16]u16 = undefined,
     /// Stack pointer
@@ -72,6 +112,7 @@ pub const Chip8 = struct {
     }
 
     pub fn ExecuteOpcode(this: *Chip8, opcode: u16) !void {
+        std.debug.print("opcode: 0x{x:0>4}\n", .{opcode});
         const x = (opcode & 0xF00) >> 8;
         const y = (opcode & 0xF0) >> 4;
         switch (opcode & 0xF000) {
@@ -114,7 +155,7 @@ pub const Chip8 = struct {
                 this.v[x] = nn;
             },
             0x7000 => {
-                const nn = opcode & 0xFF;
+                const nn: u8 = @intCast(opcode & 0xFF);
 
                 this.v[x] = @min(this.v[x] + nn, 255);
             },
@@ -161,7 +202,7 @@ pub const Chip8 = struct {
             0x9000 => if (this.v[x] != this.v[y]) {
                 this.pc += 2;
             },
-            0xA000 => this.I = opcode & 0xFFF,
+            0xA000 => this.I = @intCast(opcode & 0xFFF),
             0xB000 => {
                 var offset = opcode & 0xFFF;
                 if (this.super) {
@@ -190,41 +231,43 @@ pub const Chip8 = struct {
                         if (cx + pos >= 64) continue;
                         const bit = (std.math.shr(u8, asset, pos) & 1) == 1;
 
-                        this.gfx[cx + pos][cy] = bit;
+                        this.gfx[cx + (8 - pos)][cy] = bit;
                     }
                     cy += 1;
                     if (cy >= 32) return;
                 }
             },
             0xE000 => switch (opcode & 0xFF) {
-                0xA1 => if (this.v[x] == ray.GetKeyPressed()) {
-                    this.pc += 2;
-                },
-                0x9E => if (this.v[x] != ray.GetKeyPressed()) {
-                    this.pc += 2;
-                },
+                0xA1 => if (getKey()) |key|
+                    if (this.v[x] == key) {
+                        this.pc += 2;
+                    },
+                0x9E => if (getKey()) |key|
+                    if (this.v[x] != key) {
+                        this.pc += 2;
+                    },
                 else => return error.UnkownOpcode,
             },
             0xF000 => switch (opcode & 0xFF) {
                 0x07 => this.v[x] = this.DELAY_TIMER,
                 0x0A => if (getKey()) |key| {
-                    this.v[x] = @intCast(@intFromEnum(key));
+                    this.v[x] = key;
                 } else {
                     this.pc -= 2;
                 },
                 0x15 => this.DELAY_TIMER = this.v[x],
                 0x18 => this.SOUND_TIMER = this.v[x],
                 0x29 => this.I = this.v[x],
-                0x33 => { 
+                0x33 => {
                     var num = this.v[x];
 
-                    const x3 = num%10;
+                    const x3 = num % 10;
 
                     num /= 10;
-                    const x2 = num%10;
+                    const x2 = num % 10;
 
                     num /= 10;
-                    const x1 = num%10;
+                    const x1 = num % 10;
 
                     this.memory[this.I] = x3;
                     this.memory[this.I + 1] = x2;
@@ -236,13 +279,13 @@ pub const Chip8 = struct {
                     this.I = result % 0xFFF;
                 },
                 0x55 => {
-                    for (0..x+1) |idx| {
+                    for (0..x + 1) |idx| {
                         this.memory[this.I + idx] = this.v[idx];
                     }
                     if (this.super) this.I += x + 1;
                 },
                 0x65 => {
-                    for (0..x+1) |idx| {
+                    for (0..x + 1) |idx| {
                         this.v[idx] = this.memory[this.I + idx];
                     }
                     if (this.super) this.I += x + 1;
@@ -258,9 +301,10 @@ pub const Chip8 = struct {
         defer ray.EndDrawing();
 
         for (this.gfx, 0..) |gfx, x| {
-            for (gfx, 0..) |bit, y| if (bit) {
-                ray.DrawRectangle(@intCast(x * 10), @intCast(y * 10), WIDTH, HEIGHT, ray.WHITE);
-            };
+            for (gfx, 0..) |bit, y| {
+                const color = if (bit) ray.WHITE else ray.BLACK;
+                ray.DrawRectangle(@intCast(x * 10), @intCast(y * 10), WIDTH, HEIGHT, color);
+            }
         }
     }
 
@@ -276,9 +320,8 @@ pub const Chip8 = struct {
         ray.InitAudioDevice();
         defer ray.CloseAudioDevice();
 
-        var aStraem = ray.LoadAudioStream(48000, 32, 2);
-        defer ray.UnloadAudioStream(aStraem);
-        _ = &aStraem;
+        const beep = createBeep(440.0, 0.2);
+        ray.UnloadSound(beep);
 
         ray.SetTargetFPS(60);
         var initTime = std.time.milliTimestamp();
@@ -287,17 +330,23 @@ pub const Chip8 = struct {
             const op2 = this.memory[this.pc + 1];
             const opcode = op1 ^ op2;
             this.pc += 2;
-            try this.ExecuteOpcode(opcode);
-            
-            if ((std.time.milliTimestamp() - initTime) >= 1/60) {
+            this.ExecuteOpcode(opcode) catch |err| {
+                std.log.err("op1: 0x{x:0>2}", .{op1});
+                std.log.err("op2: 0x{x:0>2}", .{op2});
+                std.log.err("opcode: 0x{x:0>4}", .{opcode});
+                std.log.info("Program Counter: {d}", .{this.pc});
+                return err;
+            };
+
+            if ((std.time.milliTimestamp() - initTime) >= 1 / 60) {
                 if (this.DELAY_TIMER > 0) this.DELAY_TIMER -= 1;
                 if (this.SOUND_TIMER > 0) {
-                    ray.PlayAudioStream(aStraem);
-                    this.DELAY_TIMER -= 1;
+                    ray.PlaySound(beep);
+                    this.SOUND_TIMER -= 0;
                 }
                 initTime = std.time.milliTimestamp();
+                this.DrawGraphics();
             }
-            this.DrawGraphics();
         }
     }
 };
