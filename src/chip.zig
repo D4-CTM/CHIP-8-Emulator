@@ -29,48 +29,6 @@ pub const FONTSET = [_]u8{
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 };
 
-// Function made with Gemini
-fn createBeep(frequency: f32, duration: f32) ray.Sound {
-    const sample_rate = 44100;
-    const frame_count = @as(u32, @intFromFloat(sample_rate * duration));
-    
-    // Allocate memory for the audio samples
-    // Using C allocator because raylib's UnloadWave will attempt to free this
-    const samples = ray.MemAlloc(@as(c_uint, @intCast(frame_count * @sizeOf(f32))));
-    const float_samples: [*]f32 = @ptrCast(@alignCast(samples));
-
-    var i: u32 = 0;
-    while (i < frame_count) : (i += 1) {
-        const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(sample_rate));
-        var amplitude: f32 = 0.5; // Volume (0.0 to 1.0)
-
-        // Simple Fade-out to prevent "clicking"
-        const fade_threshold = 0.1; // last 10% of the sound
-        const current_pos = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(frame_count));
-        if (current_pos > (1.0 - fade_threshold)) {
-            amplitude *= (1.0 - current_pos) / fade_threshold;
-        }
-
-        float_samples[i] = @sin(2.0 * std.math.pi * frequency * t) * amplitude;
-    }
-
-    const wave = ray.Wave{
-        .frameCount = frame_count,
-        .sampleRate = sample_rate,
-        .sampleSize = 32, // 32-bit float
-        .channels = 1,    // Mono
-        .data = samples,
-    };
-
-    const sound = ray.LoadSoundFromWave(wave);
-    
-    // We can free the CPU-side wave immediately because 
-    // LoadSoundFromWave copies the data to the audio system/RAM.
-    ray.UnloadWave(wave); 
-    
-    return sound;
-}
-
 pub const Chip8 = struct {
     running: bool = true,
     super: bool = false,
@@ -317,12 +275,6 @@ pub const Chip8 = struct {
         ray.InitWindow(640, 320, "Chip-8");
         defer ray.CloseWindow();
 
-        ray.InitAudioDevice();
-        defer ray.CloseAudioDevice();
-
-        const beep = createBeep(440.0, 0.2);
-        ray.UnloadSound(beep);
-
         ray.SetTargetFPS(60);
         var initTime = std.time.milliTimestamp();
         while (this.running & !ray.WindowShouldClose()) {
@@ -341,8 +293,8 @@ pub const Chip8 = struct {
             if ((std.time.milliTimestamp() - initTime) >= 1 / 60) {
                 if (this.DELAY_TIMER > 0) this.DELAY_TIMER -= 1;
                 if (this.SOUND_TIMER > 0) {
-                    ray.PlaySound(beep);
-                    this.SOUND_TIMER -= 0;
+                    std.log.info("Beep!", .{});
+                    this.SOUND_TIMER = 0;
                 }
                 initTime = std.time.milliTimestamp();
                 this.DrawGraphics();
